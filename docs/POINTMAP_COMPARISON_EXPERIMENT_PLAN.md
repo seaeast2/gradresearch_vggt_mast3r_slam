@@ -116,6 +116,11 @@ results/pointmap_comparison/<run_id>/
       config/                    # 이 단계에서 실제 사용한 설정 사본
       artifacts/                 # 이 단계가 생성한 결과만 저장
       logs/                      # 이 단계의 stdout/stderr 및 실행 로그
+    E0a/                         # 선행 진단 단계도 독립 산출물 폴더 사용
+      manifest.json
+      config/
+      artifacts/
+      logs/
     E1/
       manifest.json
       config/
@@ -231,6 +236,20 @@ e_{mathrm{3D}}(u,v)=left|,Sigl(hat P(u,v)igr)-P^*(u,v),ight|_2
 **완료 기준:** 같은 RGB 프레임 목록에서 두 모델 실행이 가능하고 중간 결과를 저장할 수 있다.
 
 **E0 실행 기록 (2026-11-05):** run `tum-freiburg1_desk-20261105-001`, `execution_context=host`. CUDA/GPU probe, smoke test, 두 모델 추론은 샌드박스 밖 호스트에서 수행했다(RTX 5060, 8,151 MiB, driver 595.99.02, CUDA 13.2; PyTorch `2.14.1+cu132`, Python 3.11.18). 동일한 TUM `freiburg1_desk` RGB 4장(timestamp `1305031453.359684`–`1305031453.459685`)을 두 실행기에 전달했다. 원본은 RGB 613장, depth 595장, GT pose 2,335개이며, 각 RGB 시각에 depth와 pose를 독립 최근접 매칭하고 허용 오차 20 ms를 적용했을 때 596장이 유효했다. VGGT는 4장 입력의 Pointmap/Depth·confidence 및 camera 예측을 NPZ로 저장했다. MASt3R-SLAM 데모는 정상 종료하고 PLY와 trajectory를 저장했지만, 자동 키프레임 선택으로 4장 중 1장만 PLY에 기여했다. 따라서 E0 완료는 **같은 입력 목록에서 두 파이프라인을 실행하고 중간 결과를 저장할 수 있음**을 뜻하며, 프레임별 MASt3R 출력 완전성을 뜻하지 않는다. 체크포인트 SHA256, 소스 commit, 설정·패치, 전체 로그와 출력 목록은 `results/pointmap_comparison/tum-freiburg1_desk-20261105-001/stages/E0/manifest.json` 및 `artifacts/e0_summary.json`에 기록했다.
+
+### E0a — E1 선행: MASt3R-SLAM pointmap 추출·추적성 진단
+
+E1의 표준 export 구현에 앞서 upstream 런타임의 fused keyframe pointmap을 원본 RGB 프레임 및 픽셀 좌표와 안전하게 연결할 수 있는지 확인한다. 별도 run/stage에서 같은 E0 4장 입력을 사용하고, upstream checkout은 수정하지 않은 채 run-local launcher hook을 backend 종료 뒤 실행해 추출한다.
+
+- [x] E0 입력 프레임 목록의 timestamp/frame index와 MASt3R `SharedKeyframes.frame_id` 연결을 검증한다.
+- [x] keyframe별 `X_canon`, 평균 confidence, RGB, `T_WC`를 원시 해상도와 이미지 좌표 변환 정보를 포함해 NPZ로 저장한다.
+- [x] `T_WC.act(X_canon)`의 world pointmap을 함께 저장하고 Sim(3) 역변환 round-trip 오차를 측정한다.
+- [x] representative RGB pixel에서 frame ID, (u,v), local/world 3D, confidence, 색상 조회를 검증한다.
+- [x] 입력 4장 대비 추출 keyframe 수와 누락 frame ID를 기록하여 자동 keyframe 선택의 coverage를 정량화한다.
+
+**완료 기준:** 하나 이상의 fused keyframe pointmap에서 원본 프레임 timestamp와 픽셀→3D 값을 추적할 수 있고, local↔world round-trip이 수치 허용오차 내에서 통과한다. 누락 입력 프레임은 실패로 숨기지 않고 별도 기록한다. 이 진단 결과로 E1 export 인터페이스와 공통 프레임 정책을 고정한다.
+
+**E0a 실행 결과 (2026-11-05):** run `tum-freiburg1_desk-20261105-005`, `execution_context=host` (RTX 5060, 8,151 MiB, driver 595.99.02, CUDA 13.2; Python 3.11.18, PyTorch `2.14.1+cu132`). E0와 동일한 4장 입력으로 MASt3R-SLAM을 실행하고, backend 최종 대기열을 비운 뒤 upstream checkout을 수정하지 않는 stage-local overlay에서 fused keyframe `X_canon`, `C/N`, RGB, `T_WC`, `T_WC.act(X_canon)`, 융합/갱신 횟수를 NPZ에 저장했다. 결과 pointmap은 384×512이며, 입력 4장 중 frame 0(원본 TUM frame 17, timestamp `1305031453.359684`)만 keyframe으로 선택되어 coverage는 1/4, 나머지 frame ID는 1, 2, 3이다. 해당 keyframe의 중심 pixel `(u=256,v=192)`에서 local/world 3D, confidence `7.6587`, RGB를 조회했고 resize 기준 원본 좌표는 `(320.125,240.125)`였다. 실제 선택 pose는 초기 identity였으므로 실제 local/world 최대 차이는 0이다. 별도 비항등 Sim(3) (scale 1.35, Z 회전 17°, translation `[0.25,-0.4,1.2]`) 수치 round-trip 최대 오차는 `4.44e-16`이었다. 따라서 E0a는 **fused-keyframe 추출과 frame/pixel 연결 가능성**을 통과했지만, 실제 비항등 궤적 pose 검증은 E1에 남긴다. E1은 추출된 keyframe subset과 누락 frame을 명시해야 하며, 이 4장 실행만으로 프레임 전체 coverage를 주장하지 않는다. 세 번의 launcher 초기화 실패는 별도 `failed` run으로 보존했다. 상세 manifest·검증 JSON·스크립트는 `results/pointmap_comparison/tum-freiburg1_desk-20261105-005/stages/E0a/` 및 `experiments/pointmap_comparison/E0a/`에 있다.
 
 ### E1 — 표준 export 모듈 구현
 
