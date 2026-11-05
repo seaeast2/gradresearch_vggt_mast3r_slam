@@ -337,6 +337,22 @@ Confidence 상위 40% 유지 시 C02의 M-F outlier 비율은 `0.746`에서 `0.5
 
 사례별 RGB/GT depth/error/confidence/disagreement 그림 5장과 동일 camera-coordinate GT/V-P/V-D/M-F cloud 그림 5장은 `results/pointmap_comparison/tum-freiburg1_desk-E4-20261105-019/stages/E4/artifacts/figures/` 및 `same_view_clouds/`에 있다. 사례별 오차·coverage·retention CSV와 상관·fusion 표본 수·P2 경로 요약은 같은 run의 `e4_summary.json`, `case_metrics.csv`, `retention_tradeoff.csv`에 저장했다. 점군은 per-view camera frame이며 전역 정합을 수행하지 않았다. 실행 중 분석기 준비 실패 2회는 run `...-017`, `...-018`에 별도 보존하고 성공 run에서는 덮어쓰지 않았다. 재현 코드는 `experiments/pointmap_comparison/E4/`에 있다.
 
+### E5 — HKairport01 드론 영상 연속 SLAM 및 PLY 생성
+
+- [x] 참조 저장소의 HKairport01 입력 규약과 선택 구간 조사.
+- [x] Git에 포함되지 않은 로컬 영상 대신, 같은 MARS-LVIG HKairport01 시퀀스의 공개 MCAP 원본을 pinned revision 및 SHA-256과 함께 사용.
+- [x] 원본 `/left_camera/image/compressed`에서 60초 구간의 5 Hz 후보 300장을 재구성하고, grid index 4 mod 5의 60장을 held-out, 나머지 240장을 시간순 mapping 입력으로 사용.
+- [x] 호스트 GPU에서 MASt3R-SLAM 연속 추적·융합을 실행하고 PLY/trajectory를 생성. 8 GB GPU에 맞춰 keyframe buffer 32를 사용.
+- [x] 입력 timestamp/JPEG SHA-256, 모델/source/config, CUDA/GPU, 실행 시간·VRAM 표본, PLY vertex 수·SHA-256을 manifest와 로그에 기록.
+
+**완료 기준:** 선택 구간의 240장 입력 전체가 순차 처리 루프에 공급되고 정상 종료, 하나 이상의 fused keyframe, 유효 좌표가 있는 non-empty PLY, trajectory 및 재현 provenance를 E5 stage output에 보존한다. HKairport01은 정량 결론보다 시각적 지도 예시다. PLY만으로 절대 위치 정확도, 전역 drift 또는 실제 표면 정확도를 주장하지 않는다.
+
+**E5 실행 결과 (2026-11-05):** 공개 원본 `DapengFeng/MCAP`의 pinned revision `4dff3556f5283b586e955e0a06b01c2f8165a40d`에서 HKairport01 MCAP(20,439,576,672 bytes)를 다운로드했고, 공개 LFS SHA-256 `cfcdcedcb3a06efe5a3d1041cd7e9c2bf88cffa7376ec3a878aff754fa34a4cc`와 일치했다. `/left_camera/image/compressed` 7,799개 메시지에서 candidate 300장과 held-out 60장을 확인하고, mapping 240장(2448×2048)을 구성했다. timestamp는 `1671606500.199900866`–`1671606559.799968958`이다. 매핑 CSV SHA-256은 `754c0da3207ccd33f8a49bf2a64f25b07573f2beffeb7f1934b8a1e7221a83fd`이다. 참조 저장소에서도 대용량 원본·프레임은 Git 제외 대상이어서, 공개 MCAP에서 다시 프레임을 구성했다. 따라서 참조 저장소의 기존 개별 PNG와 byte-for-byte 동등성은 주장하지 않는다.
+
+성공 run `hkairport01-E5-20261105-002`는 `execution_context=host`, NVIDIA GeForce RTX 5060 (8,151 MiB), MASt3R-SLAM source commit `60a3fbc564518b3dad4433e9ec7a5754810897dd`, E0 checkpoint/config, `use_calib=false`, `single_thread=true`, keyframe buffer 32로 실행했다. 240장 mapping input을 순차 처리해 18 fused keyframe을 만들었고, 실행은 106.44초에 정상 종료했다. 200 ms 간격 GPU 전체 메모리 표본 최대는 6,486 MiB였다. PLY는 47,856,901 bytes, 3,190,448 vertices이며 XYZ 모두 유한값이다. PLY SHA-256은 `5987f0c89ee31ed36d13268b85fcf0657d866ac52afa957dad79ee281cf2c461`이다. trajectory는 keyframe pose 18개만 담고, 마지막 keyframe timestamp `1671606550.199992180`은 마지막 mapping 입력보다 약 9.60초 앞이다. 입력 240장 전체에 대한 per-frame pose/추적 성공을 의미하지 않으며, 궤적·지도 정확도는 이 실행만으로 검증되지 않았다.
+
+PLY: `results/pointmap_comparison/hkairport01-E5-20261105-002/stages/E5/artifacts/outputs/hkairport01-E5-20261105-002/rgbd_dataset_freiburg1_HKairport01_E5.ply`. trajectory, frame hashes, 환경·로그·PLY 검증 요약은 같은 stage의 `artifacts/outputs/`, `artifacts/data/`, `artifacts/e5_summary.json`, `manifest.json`에 있다. 첫 실행 `hkairport01-E5-20261105-001`은 `rgb.txt` 개행 생성 오류로 dataset 초기화 전에 종료되어 별도 실패 run으로 보존했다. 재현 코드는 `experiments/pointmap_comparison/E5/`에 있다.
+
 ## 9. 보고서에 반드시 포함할 표/그림
 
 | 결과물 | 내용 |
@@ -434,5 +450,7 @@ gradresearch_vggt_mast3r_slam/
 9. MASt3R checkpoint training-data license notice: https://github.com/naver/mast3r/blob/main/CHECKPOINTS_NOTICE
 10. TUM RGB-D benchmark license and citation: https://cvg.cit.tum.de/data/datasets/rgbd-dataset
 11. TUM RGB-D depth format and scale reference: https://cvg.cit.tum.de/_media/spezial/bib/sturm12iros.pdf
+12. HKairport01 input protocol and prior 240-frame mapping run: https://github.com/seaeast2/gradresearch_mast3r_slam/tree/5960d292b293058f5b6d0ace61aa10b7d43371d7
+13. MARS-LVIG HKairport01 public MCAP, pinned dataset revision: https://huggingface.co/datasets/DapengFeng/MCAP/tree/4dff3556f5283b586e955e0a06b01c2f8165a40d/mars_lvig/HKairport01
 
 **문서 성격:** 이 문서는 계획과 단계별 실행 기록을 함께 보관한다. §13 고정값은 개발 장면용이며, 이후 평가 결과는 사전 고정된 설정을 그대로 적용하고 별도 결과 문서에 기록한다.
