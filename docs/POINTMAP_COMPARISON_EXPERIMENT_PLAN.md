@@ -249,7 +249,7 @@ E1의 표준 export 구현에 앞서 upstream 런타임의 fused keyframe pointm
 
 **완료 기준:** 하나 이상의 fused keyframe pointmap에서 원본 프레임 timestamp와 픽셀→3D 값을 추적할 수 있고, local↔world round-trip이 수치 허용오차 내에서 통과한다. 누락 입력 프레임은 실패로 숨기지 않고 별도 기록한다. 이 진단 결과로 E1 export 인터페이스와 공통 프레임 정책을 고정한다.
 
-**E0a 실행 결과 (2026-11-05):** run `tum-freiburg1_desk-20261105-005`, `execution_context=host` (RTX 5060, 8,151 MiB, driver 595.99.02, CUDA 13.2; Python 3.11.18, PyTorch `2.14.1+cu132`). E0와 동일한 4장 입력으로 MASt3R-SLAM을 실행하고, backend 최종 대기열을 비운 뒤 upstream checkout을 수정하지 않는 stage-local overlay에서 fused keyframe `X_canon`, `C/N`, RGB, `T_WC`, `T_WC.act(X_canon)`, 융합/갱신 횟수를 NPZ에 저장했다. 결과 pointmap은 384×512이며, 입력 4장 중 frame 0(원본 TUM frame 17, timestamp `1305031453.359684`)만 keyframe으로 선택되어 coverage는 1/4, 나머지 frame ID는 1, 2, 3이다. 해당 keyframe의 중심 pixel `(u=256,v=192)`에서 local/world 3D, confidence `7.6587`, RGB를 조회했고 resize 기준 원본 좌표는 `(320.125,240.125)`였다. 실제 선택 pose는 초기 identity였으므로 실제 local/world 최대 차이는 0이다. 별도 비항등 Sim(3) (scale 1.35, Z 회전 17°, translation `[0.25,-0.4,1.2]`) 수치 round-trip 최대 오차는 `4.44e-16`이었다. 따라서 E0a는 **fused-keyframe 추출과 frame/pixel 연결 가능성**을 통과했지만, 실제 비항등 궤적 pose 검증은 E1에 남긴다. E1은 추출된 keyframe subset과 누락 frame을 명시해야 하며, 이 4장 실행만으로 프레임 전체 coverage를 주장하지 않는다. 세 번의 launcher 초기화 실패는 별도 `failed` run으로 보존했다. 상세 manifest·검증 JSON·스크립트는 `results/pointmap_comparison/tum-freiburg1_desk-20261105-005/stages/E0a/` 및 `experiments/pointmap_comparison/E0a/`에 있다.
+**E0a 실행 결과 (2026-11-05):** run `tum-freiburg1_desk-20261105-005`, `execution_context=host` (RTX 5060, 8,151 MiB, driver 595.99.02, CUDA 13.2; Python 3.11.18, PyTorch `2.14.1+cu132`). E0와 동일한 4장 입력으로 MASt3R-SLAM을 실행하고, backend 최종 대기열을 비운 뒤 upstream checkout을 수정하지 않는 stage-local overlay에서 fused keyframe `X_canon`, `C/N`, RGB, `T_WC`, `T_WC.act(X_canon)`, 융합/갱신 횟수를 NPZ에 저장했다. 결과 pointmap은 384×512이며, 입력 4장 중 frame 0(원본 TUM frame 17, timestamp `1305031453.359684`)만 keyframe으로 선택되어 coverage는 1/4, 나머지 frame ID는 1, 2, 3이다. 해당 keyframe의 중심 pixel `(u=256,v=192)`에서 local/world 3D, confidence `7.6587`, RGB를 조회했고 resize 기준 원본 좌표는 `(320.125,240.125)`였다. 실제 선택 pose는 초기 identity였으므로 실제 local/world 최대 차이는 0이다. 별도 비항등 Sim(3) (scale 1.35, Z 회전 17°, translation `[0.25,-0.4,1.2]`) 수치 round-trip 최대 오차는 `4.44e-16`이었다. E1에서도 네 장 실행은 identity pose 하나만 제공했으므로 실제 비항등 궤적 pose 검증은 여러 keyframe이 생기는 후속 실행에 남긴다. E1은 추출된 keyframe subset과 누락 frame을 명시하며, 이 4장 실행만으로 프레임 전체 coverage를 주장하지 않는다. 세 번의 launcher 초기화 실패는 별도 `failed` run으로 보존했다. 상세 manifest·검증 JSON·스크립트는 `results/pointmap_comparison/tum-freiburg1_desk-20261105-005/stages/E0a/` 및 `experiments/pointmap_comparison/E0a/`에 있다.
 
 ### E0b — E1 구현 전 결정·수용량 확인
 
@@ -267,12 +267,16 @@ E1의 표준 export 구현에 앞서 upstream 런타임의 fused keyframe pointm
 
 ### E1 — 표준 export 모듈 구현
 
-- [ ] `export_vggt.py`: V-P, V-D, depth/confidence, camera, frame_id를 NPZ/PLY로 저장.
-- [ ] `export_mast3r_slam.py` 또는 upstream 최소 패치: M-F의 `X_canon`, `T_WC`, confidence 및 키프레임 원본 ID를 저장.
-- [ ] M-R이 필요하면 MASt3R 추론 직후 원시 예측 Pointmap을 저장하도록 **별도** 추출 위치 추가.
-- [ ] coordinate/unit/rgb pixel map에 대한 round-trip 단위 테스트.
+- [x] `export_vggt.py`: V-P, V-D, depth/confidence, camera, frame ID와 이미지 좌표 변환 정보를 NPZ/PLY로 저장.
+- [x] `export_mast3r_slam.py` 및 run-local final hook: M-F의 `X_canon`, `T_WC`, confidence 및 키프레임 원본 ID를 저장.
+- [x] 이번 E1 범위는 계획의 주 비교인 M-F로 고정하고, 선택 variant M-R은 수행하지 않기로 결정했다. M-R은 필요 시 별도 실험으로 추가한다.
+- [x] coordinate/unit/RGB pixel map round-trip 검증기를 실행한다.
 
 **완료 기준:** RGB 픽셀 한 개를 역추적하여 두 출력에서 해당 3D 위치와 Confidence를 조회할 수 있다.
+
+**E1 실행 결과 (2026-11-05):** 성공 run `tum-freiburg1_desk-20261105-014`, `execution_context=host` (RTX 5060, PyTorch `2.14.1+cu132`, CUDA 13.2, bfloat16). VGGT는 공유 입력 4장 전부에 대해 V-P/V-D, depth와 confidence, extrinsic/intrinsic, 원본 frame/timestamp, source image size, 518×518 input grid, 63px 상하 padding map을 NPZ로 저장하고 V-P/V-D binary PLY를 프레임별 생성했다. peak allocated/reserved VRAM은 6,775,736,832/7,591,690,240 bytes였다. 추론은 완료했으나 CUDA allocator가 551,550,976-byte 요청의 실패 경고를 기록했다. 결과 생성 자체는 성공했으며, 8GB급 GPU에서 N=4도 여유가 작으므로 후속 추론의 VRAM 상태를 계속 기록한다. VGGT 대표 입력 frame 0의 center net pixel `(259,259)`는 source pixel `(320.118,240.112)`로 역매핑되고, 해당 위치의 V-P XYZ `[-0.001663,-0.001650,0.865488]`, V-D XYZ `[0.000137,-0.000033,0.861579]`, V-P confidence `4.0636`, depth `0.861663`, depth confidence `7.2568`을 기록했다.
+
+MASt3R-SLAM은 동일한 4 RGB 프레임을 입력받아 M-F keyframe 1개를 export했다(frame ID 0, 원본 TUM frame 17, timestamp `1305031453.359684`, 384×512; fusion/update count 모두 4). frame ID 1–3은 선택되지 않아 누락으로 기록했다. NPZ에는 local/world pointmap, confidence, RGB, `T_WC`, source mapping과 validity mask를 저장하고 binary PLY도 생성했다. 검증에서 VGGT와 MASt3R의 실제 resize RGB 최대 차이는 각각 0, 두 모델의 pixel-center map round-trip 최대 오차는 0 px, 비항등 합성 Sim(3) local↔world round-trip 최대 오차는 0으로 통과했다. 대표 MASt3R pixel `(256,192)`의 local/world point는 `[0.000785,-0.002158,0.953714]`, confidence는 `7.6587`이었다. VGGT 및 M-F 대표 픽셀의 3D·confidence·RGB 값과 frame/timestamp 대응은 `e1_export_validation_full.json`에 보존했다. 실제 trajectory pose는 identity keyframe 하나뿐이므로 비항등 실제 pose 검증은 여러 keyframe이 생성되는 후속 실행에서 수행한다. E1 run `...-011`은 retrieval checkpoint 경로, `...-012`는 validation JSON 직렬화 문제로 실패해 별도 run에 보존했다. 기존 검증으로 완료된 중간 run `...-013`도 보존했고, 최종 보강 검증은 run `...-014`에서 완료했다. 성공 export·validation·hash manifest는 `results/pointmap_comparison/tum-freiburg1_desk-20261105-014/stages/E1/`에 있고 재현 코드는 `experiments/pointmap_comparison/E1/`에 있다.
 
 ### E2 — GT 기반 정량 평가 파이프라인
 
