@@ -296,14 +296,26 @@ V-P/V-D 점 차이 중앙값은 `4.37 mm`였으며, 그 크기와 각 출력의 
 
 ### E3 — 파일럿 및 실험 반복
 
-- [ ] 1개 장면, 4/8/16/32프레임 입력 예산 실험(P1).
-- [ ] 다른 장면에서 동일 조건 재현.
-- [ ] 결과가 흔들리는 조건에 대해서는 3회 실행(초기 제안; deterministic 여부와 함께 표기).
-- [ ] C0 미보정 주 비교와 C1 보정 보조 실험 분리.
-- [ ] Confidence 상위 100/80/60/40% 유지에 대한 sensitivity 분석.
-- [ ] 긴 연속 영상 운용 실험(P2) 별도 수행.
+- [x] 1개 장면, 4/8/16/32프레임 입력 예산 실험(P1).
+- [x] 다른 장면에서 동일 조건 재현.
+- [x] 대표 조건 3회 실행 및 deterministic 여부 표기.
+- [x] C0 미보정 주 비교와 C1 보정 보조 실험 분리.
+- [x] Confidence 상위 100/80/60/40% 유지에 대한 sensitivity 분석.
+- [x] 긴 연속 영상 운용 실험(P2) 별도 수행; 성공/실패와 장치 한계를 기록.
 
 **완료 기준:** 성공/실패를 포함한 모든 조합에서 자동 생성된 CSV/JSON 비교표를 얻는다.
+
+**E3 실행 결과 (2026-11-05):** run `tum-freiburg1_desk-E3-20261105-016`, `execution_context=host`, RTX 5060 8,151 MiB. desk는 E0 입력을 다시 동기화해 RGB 613/depth 595/pose 2,335 중 596개 유효 항목을 확인했다. 두 번째 장면 `freiburg1_room`은 TUM 공식 아카이브(782,381,450 bytes, SHA256 `5ace47a1d2e53696bc939a84999293a04a7226958e848a609666691fd3cc38da`)로 재현했고 RGB 1,362/depth 1,360/pose 4,887 중 1,362개 유효 항목이었다. 각 P1 목록은 timestamp 순서의 첫 N개 유효 RGB로 고정했다.
+
+P1 전체 4/8/16/32 조합에서 두 장면의 MASt3R-SLAM은 모두 종료에 성공했다. VGGT는 desk와 room N=4에서 모두 성공했으며, N=8/16/32 여섯 조건은 모두 실제 CUDA OOM으로 실패했다. N=8 로그는 DPT depth head에서 1.03 GiB 추가 할당 실패를 보인다. 따라서 VGGT의 이 GPU·518² 설정에서는 비교 가능한 N이 4뿐이며 N>4를 타일 입력 등으로 대체하지 않았다. MASt3R-SLAM은 N=4/8/16에서 keyframe 각 1개, N=32에서 각 2개를 출력했다. 입력 대비 keyframe coverage는 25%, 12.5%, 6.25%, 6.25%였다. 이는 SLAM 출력 subset의 coverage이며, 누락 프레임의 dense map을 뜻하지 않는다.
+
+두 장면 N=4에서만 직접 대응 가능한 C0 픽셀 평가가 가능했다. desk의 VGGT V-P/V-D AbsRel은 `0.2185/0.2189`, depth RMSE `0.2811/0.2806 m`, camera-local 3D median `0.2528/0.2504 m`였다. desk M-F(1/4 keyframe)는 각각 `0.1698`, `0.2373 m`, `0.1569 m`였다. room에서는 V-P/V-D AbsRel `0.2687/0.2687`, depth RMSE `0.4380/0.4362 m`, 3D median `0.2899/0.2924 m`; M-F(1/4 keyframe)는 `0.0760`, `0.2305 m`, `0.0564 m`였다. 공통 관측 표면의 frame macro F-score@5cm은 desk V-P/V-D/M-F `0.0417/0.0443/0.1144`, room `0.0228/0.0258/0.5614`였다. 이 M-F 수치는 각 장면에서 한 keyframe에 한정되며 sequence/global 정합 점수로 해석하지 않는다. GT intrinsics는 TUM RGB 등록 깊이 평가에만 적용했고, global Sim(3)은 사전 고정한 60-frame 최소 prefix를 채우지 못해 수행하지 않았다.
+
+C0 주 비교와 분리한 MASt3R C1 보정 실행은 desk/room N=4 모두 성공했다. 두 모델에 대칭적으로 calibration을 공급할 수 없으므로 C1은 보조 실행이다. P1 각 장면에서 대표 조건을 3회 실행했을 때 desk/room VGGT N=4와 MASt3R N=32의 export NPZ SHA256은 각각 세 번 모두 동일했다. 기존 E1 desk N=4 VGGT 및 M-F 파일과 E3 반복본도 byte-identical이었다. 이 조건에서는 반복 간 출력 변동이 관찰되지 않았다.
+
+모든 MASt3R P1 예산에 대해 M-F의 상위 confidence 100/80/60/40% 유지 곡선을 계산했다. 상위 40% retained point의 5cm outlier 비율은 desk N=4/8/16/32에서 `1.000/1.000/1.000/0.868`, room에서 `0.212/0.377/0.457/0.731`이었다. 유지율은 실제 출력 keyframe 내의 point를 기준으로 하므로 전체 입력 프레임 coverage와 별개다. room P2의 전체 1,362개 연속 프레임 MASt3R 실행은 keyframe buffer 사전 할당에서 OOM(추가 3.99 GiB 요청, 가용 399 MiB)으로 종료했다. 같은 시퀀스에서 균등 간격 VGGT 4장 운용은 25.2초에 완료했다. P2 두 결과는 입력량이 달라 P1 정확도와 혼합하지 않는다.
+
+Condition별 성공/실패, latency, 출력 수/coverage, VGGT peak allocated/reserved, MASt3R 100 ms sampled VRAM peak, 정량 지표 및 manifest 경로가 있는 CSV/JSON은 `results/pointmap_comparison/tum-freiburg1_desk-E3-20261105-016/stages/E3/artifacts/summary/`에 있다. 아카이브 hash·모델 hash·모든 condition manifest는 stage `manifest.json`에 기록했다. 재현 코드는 `experiments/pointmap_comparison/E3/`에 있다.
 
 ### E4 — 사례 분석과 연구 연결
 
