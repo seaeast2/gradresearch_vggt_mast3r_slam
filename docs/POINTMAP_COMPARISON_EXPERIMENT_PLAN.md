@@ -319,13 +319,23 @@ Condition별 성공/실패, latency, 출력 수/coverage, VGGT peak allocated/re
 
 ### E4 — 사례 분석과 연구 연결
 
-- [ ] 이상점이 많은 사례 5개 이상 기록(초기 제안).
-- [ ] 책상 모서리, 가림, 무텍스처 벽, 반사 표면, 긴 이동 궤적 등 실패 원인 분류.
-- [ ] VGGT의 `||V-P - V-D||`를 불확실성 지표 후보로 계산하고 **실제 outlier label과의 상관**을 확인한다.
-- [ ] MASt3R-SLAM의 Confidence 및 융합 횟수와 이상점 간 관계도 함께 평가한다.
-- [ ] 점 제거를 제안한다면 **Outlier 감소량과 Coverage 손실**을 반드시 함께 측정한다.
+- [x] 이상점이 많은 사례 5개 기록.
+- [x] 책상 모서리, 가림, 무늬가 적은 벽, 어두운 display 표면, 긴 이동 궤적을 분류.
+- [x] VGGT의 `||V-P - V-D||`와 GT error `>5cm` label의 관계를 ROI 및 장면별로 측정.
+- [x] MASt3R-SLAM의 confidence 및 fusion 횟수와 이상점 간 관계를 측정하고 표본 부족을 표시.
+- [x] confidence 점 제거별 outlier 비율 변화와 coverage 손실을 함께 측정.
 
 **완료 기준:** 수치·오차맵·동일 시점 pointcloud 사례가 모두 있는 사전 실험 보고서 작성.
+
+**E4 실행 결과 (2026-11-05):** run `tum-freiburg1_desk-E4-20261105-019`, `execution_context=host` (CPU 분석). 기하학적 outlier label은 RGB-등록 GT의 유효 깊이 `0.30–5.0 m`와 비교한 per-pixel camera-local 3D 오차 `>0.05 m`로 고정했다. 장면 유형은 육안 수동 분류이며 semantic GT가 아니다. desk edge(C01), teddy bear/monitor 가림 경계(C02), room P2 frame 454의 무늬가 적은 벽(C03), desk frame 18의 어두운 monitor display(C04), P2 끝점 frame 1361(C05)을 분석했다. C04는 반사 측정 GT가 있는 사례가 아니므로 “어두운 display 표면”으로만 라벨링했다.
+
+desk 전체 4-frame pilot에서 V-P/V-D 불일치량과 GT 3D 오차 간 Spearman rho는 `0.540/0.531`(1,016,716 pixel), room은 `0.394/0.378`(892,477 pixel)이었다. 장면별 pixel을 합치면 `0.434/0.418`(1,909,193 pixel)이다. 그러나 texture-poor wall C03 ROI에서는 `-0.487/-0.541`로 부호가 반대였다. 따라서 이 불일치는 두 pilot의 전체 픽셀에서는 GT error와 함께 커지는 경향을 보였지만, 실패 유형별 또는 장면 일반의 단독 이상점 점수로 쓰기에는 불충분하다. pixel 수는 독립 시퀀스 수가 아니므로 p-value를 일반화 근거로 사용하지 않는다.
+
+동일 N=4 keyframe의 MASt3R confidence와 픽셀 3D 오차 rho는 desk `-0.469`(255,142 pixel), room `-0.716`(220,491 pixel)로 관측됐다. 이는 confidence가 큰 픽셀에서 error가 작아지는 기술적 경향이며, 확률 보정이나 새 장면에서의 예측 성능을 뜻하지 않는다. N=4 fusion count는 두 장면 모두 `[4]`; N=32에서는 desk `[26,7]`, room `[24,9]`였다. N=32는 각 장면 2개 keyframe뿐이고 outlier 경향도 장면 간 일관적이지 않아 fusion-count 관계는 추정 불가로 남겼다.
+
+Confidence 상위 40% 유지 시 C02의 M-F outlier 비율은 `0.746`에서 `0.555`로 낮아졌지만, ROI GT coverage도 `1.00`에서 `0.40`으로 줄었다. 같은 ROI의 V-P/V-D는 top-40%에도 outlier 비율이 거의 `1.00`으로 남아 개선되지 않았다. C05 장거리 끝점(frame 1361)은 누적 GT 카메라 중심 이동 `15.976 m`, 시작-끝 중심 변위 `1.866 m`이며 V-P/V-D median error `0.539/0.542 m`였다. 해당 full-frame top-40% 유지에서도 5cm outlier 비율은 사실상 1.00으로 남고 coverage는 0.40이었다.
+
+사례별 RGB/GT depth/error/confidence/disagreement 그림 5장과 동일 camera-coordinate GT/V-P/V-D/M-F cloud 그림 5장은 `results/pointmap_comparison/tum-freiburg1_desk-E4-20261105-019/stages/E4/artifacts/figures/` 및 `same_view_clouds/`에 있다. 사례별 오차·coverage·retention CSV와 상관·fusion 표본 수·P2 경로 요약은 같은 run의 `e4_summary.json`, `case_metrics.csv`, `retention_tradeoff.csv`에 저장했다. 점군은 per-view camera frame이며 전역 정합을 수행하지 않았다. 실행 중 분석기 준비 실패 2회는 run `...-017`, `...-018`에 별도 보존하고 성공 run에서는 덮어쓰지 않았다. 재현 코드는 `experiments/pointmap_comparison/E4/`에 있다.
 
 ## 9. 보고서에 반드시 포함할 표/그림
 
