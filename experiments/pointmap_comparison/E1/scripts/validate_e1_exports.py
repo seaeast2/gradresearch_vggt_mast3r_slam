@@ -83,8 +83,12 @@ for slot, frame_id in enumerate(m["dataset_frame_id"].astype(int)):
     assert np.max(np.abs(expected-observed)) < 2e-3
     back = (np.linalg.inv(matrix) @ np.r_[observed, 1.0])[:3]
     assert np.max(np.abs(back-local)) < 2e-3
+    source_h, source_w = map(int, m["source_image_shape_hw"][slot])
+    source_u = (w//2+0.5)*source_w/w-0.5
+    source_v = (h//2+0.5)*source_h/h-0.5
     sample_records.append({"dataset_frame_id": frame_id, "rgb_timestamp": str(m["rgb_timestamp"][slot]),
-                           "pixel_uv": [w//2,h//2], "local_xyz": local.tolist(), "world_xyz": observed.tolist(),
+                           "pixel_uv": [w//2,h//2], "source_pixel_uv": [source_u,source_v],
+                           "local_xyz": local.tolist(), "world_xyz": observed.tolist(),
                            "confidence": float(m["confidence"][slot,h//2,w//2]),
                            "rgb_01": m["rgb"][slot,h//2,w//2].astype(float).tolist()})
 
@@ -109,6 +113,19 @@ for slot, frame_id in enumerate(v["dataset_frame_id"].astype(int)):
         "depth_m":float(v["depth"][slot,vv,u]),
         "depth_confidence":float(v["depth_conf"][slot,vv,u]),
         "rgb_01":v["input_rgb"][slot,:,vv,u].astype(float).tolist()})
+paired_pixel_differences = []
+vggt_by_id = {sample["dataset_frame_id"]: sample for sample in vggt_samples}
+for sample in sample_records:
+    frame_id = sample["dataset_frame_id"]
+    if frame_id in vggt_by_id:
+        vg = vggt_by_id[frame_id]
+        delta = np.asarray(vg["source_pixel_uv"]) - np.asarray(sample["source_pixel_uv"])
+        difference = float(np.linalg.norm(delta))
+        assert difference < 0.02, f"Representative source pixels diverge by {difference:.6f} px"
+        paired_pixel_differences.append({"dataset_frame_id":frame_id,"rgb_timestamp":sample["rgb_timestamp"],
+            "vggt_source_pixel_uv":vg["source_pixel_uv"],"mast3r_source_pixel_uv":sample["source_pixel_uv"],
+            "euclidean_difference_px":difference})
+assert paired_pixel_differences, "No overlapping VGGT/M-F frame to verify common source pixel"
 
 # Exercise non-identity scale/rotation/translation, independent of the identity E0a keyframe pose.
 theta = np.deg2rad(23.0); scale = 1.7
@@ -122,6 +139,7 @@ result = {"status":"passed", "vggt_input_frames":len(v["dataset_frame_id"]),
           "vggt_pointmap_grid":list(v["V_P"].shape[1:3]), "mast3r_pointmap_grids":m["image_shape_hw"].tolist(),
           "pixel_mapping_roundtrip_max_error_px":{"vggt":pixel_roundtrip,"mast3r":mast3r_pixel_roundtrip},
           "rgb_transform_max_abs_error":{"vggt":vggt_rgb_error,"mast3r":mast3r_rgb_error},
+          "paired_source_pixel_correspondence":paired_pixel_differences,
           "synthetic_nonidentity_sim3_roundtrip_max_error":sim3_error,
           "vggt_center_pixel_samples":vggt_samples,
           "mast3r_center_pixel_samples":sample_records,
