@@ -251,6 +251,20 @@ E1의 표준 export 구현에 앞서 upstream 런타임의 fused keyframe pointm
 
 **E0a 실행 결과 (2026-11-05):** run `tum-freiburg1_desk-20261105-005`, `execution_context=host` (RTX 5060, 8,151 MiB, driver 595.99.02, CUDA 13.2; Python 3.11.18, PyTorch `2.14.1+cu132`). E0와 동일한 4장 입력으로 MASt3R-SLAM을 실행하고, backend 최종 대기열을 비운 뒤 upstream checkout을 수정하지 않는 stage-local overlay에서 fused keyframe `X_canon`, `C/N`, RGB, `T_WC`, `T_WC.act(X_canon)`, 융합/갱신 횟수를 NPZ에 저장했다. 결과 pointmap은 384×512이며, 입력 4장 중 frame 0(원본 TUM frame 17, timestamp `1305031453.359684`)만 keyframe으로 선택되어 coverage는 1/4, 나머지 frame ID는 1, 2, 3이다. 해당 keyframe의 중심 pixel `(u=256,v=192)`에서 local/world 3D, confidence `7.6587`, RGB를 조회했고 resize 기준 원본 좌표는 `(320.125,240.125)`였다. 실제 선택 pose는 초기 identity였으므로 실제 local/world 최대 차이는 0이다. 별도 비항등 Sim(3) (scale 1.35, Z 회전 17°, translation `[0.25,-0.4,1.2]`) 수치 round-trip 최대 오차는 `4.44e-16`이었다. 따라서 E0a는 **fused-keyframe 추출과 frame/pixel 연결 가능성**을 통과했지만, 실제 비항등 궤적 pose 검증은 E1에 남긴다. E1은 추출된 keyframe subset과 누락 frame을 명시해야 하며, 이 4장 실행만으로 프레임 전체 coverage를 주장하지 않는다. 세 번의 launcher 초기화 실패는 별도 `failed` run으로 보존했다. 상세 manifest·검증 JSON·스크립트는 `results/pointmap_comparison/tum-freiburg1_desk-20261105-005/stages/E0a/` 및 `experiments/pointmap_comparison/E0a/`에 있다.
 
+### E0b — E1 구현 전 결정·수용량 확인
+
+§13의 미결 항목을 고정하기 위해 E0 개발 시퀀스·핀된 소스·체크포인트를 재사용한다. upstream checkout과 기존 단계 출력은 수정하지 않는다. GPU 측정은 샌드박스에서 CUDA가 보이지 않으므로 반드시 호스트에서 실행한다. 재현 스크립트는 `experiments/pointmap_comparison/E0b/`, 결과·로그·측정 manifest는 고유 run의 `stages/E0b/` 아래에 저장한다.
+
+- [x] 비교 모델·체크포인트: 공식 `facebook/VGGT-1B`; 소스 commit `a288dd0f14786c93483e45524328726ab7b1b4ce`, checkpoint SHA-256 `d15bf50a8615c8225ed48b51ea5cac673d82442ec0309036df555a053253afe0`. 원 체크포인트는 비상업 연구용 조건으로만 사용한다. 상업 사용이 필요한 경우 별도 상업 checkpoint와 약관으로 새 실행을 정의한다.
+- [x] MASt3R 추출 지점: `SharedKeyframes`의 fused keyframe `X_canon`, `get_average_conf()`, `uimg`, `T_WC`, `N/N_updates`; backend 대기열 종료 후 stage-local export hook에서 저장한다. upstream 소스는 수정하지 않는다. 이는 fused M-F subset이며 모든 입력 프레임의 pointmap이 아니다. E0a에서 선택률 1/4로 확인했다. 원시 pairwise M-R은 별도 ablation으로 남긴다.
+- [x] 입력 격자/역매핑: TUM 원본 RGB 640×480. VGGT `mode=pad` 입력은 518×518이며 원본은 518×392로 bicubic 축소하고 위·아래 63픽셀씩 흰색 패딩한다. 픽셀 중심 기준 원본 역변환은 `u=(u_net-pad_left+0.5)*640/518-0.5`, `v=(v_net-pad_top+0.5)*480/392-0.5`이다. MASt3R-SLAM 입력/pointmap은 512×384, crop 변화 없이 0.8 배율 축소되므로 `u=(u_net+0.5)*640/512-0.5`, `v=(v_net+0.5)*480/384-0.5`로 되돌린다. 각 export는 원본 크기, net 크기, padding/crop, pixel convention을 메타데이터에 기록한다.
+- [x] Sim(3) 정렬 prefix 및 퇴화 판정: 깊이·GT pose가 모두 RGB와 20 ms 이내 연결된 프레임의 앞 20%(`ceil(0.20N)`, 최소 60개)를 정렬 전용으로 고정하고 이후 프레임은 평가에만 사용한다. prefix camera center 최대 변위가 0.5 m 미만이거나 중심 공분산 고유값 `lambda2/lambda1 < 0.01`이면 궤적을 퇴화로 판정하고 사전 정의된 더 긴 prefix로 확장한다. 확장 후에도 실패하면 해당 run의 global Sim(3) 비교는 평가 불가로 기록한다. 개발 장면에서 596개 유효 프레임 중 120개 prefix는 변위 1.273 m, `lambda2/lambda1=0.0706`으로 기준을 통과했다. 30개는 0.358 m라 최소 길이 60의 근거로 삼았다.
+- [x] 개발 장면 기준 평가 상수: GT depth는 uint16 PNG 값을 5000으로 나눠 미터로 바꾸고, 0.30–5.00 m만 유효로 둔다. 주 point-error/F-score 및 surface-outlier 임계값 `tau=0.05 m`; 자유공간 검사에서 GT 표면 불확실성 margin `0.02 m`; 모든 모델 공통 voxel size `0.02 m`. `0.02/0.10 m` 임계값 민감도도 함께 보고하고, 유효 GT 픽셀 수를 항상 기록한다. 이 설정은 freiburg1_desk 개발 장면에서 고정하며 평가 장면에 맞춰 재조정하지 않는다.
+- [x] GPU와 최대 입력 수: 호스트 RTX 5060 물리 VRAM 8,151 MiB (CUDA reported allocatable 7.53 GiB), driver 595.99.02, CUDA 13.2; PyTorch `2.14.1+cu132`, bfloat16, 입력 격자 518²에서 N=1/2/4/5는 완료, N=6은 OOM. allocator peak(allocated/reserved)는 N=1 5.35/5.98 GiB, N=2 5.52/6.65 GiB, N=4 6.31/7.07 GiB, N=5 6.71/7.22 GiB였다. N=5는 추론 후 여유가 약 149 MiB뿐이므로 E1의 안전 최대 N은 **4**로 제한한다. 더 큰 N은 해상도/메모리 정책 변경을 별도 사전 실행으로 검증하기 전에는 사용하지 않는다.
+- [x] 데이터·모델 라이선스: TUM RGB-D benchmark 페이지는 데이터에 CC BY 4.0을 명시하며 데이터 사용 논문 인용을 요청한다. 프레임/깊이/pose는 이 저장소나 원격 Git에 복제하지 않고 opt-in 다운로드로 받는다. VGGT-1B 원 체크포인트는 비상업 사용으로 제한한다. MASt3R-SLAM/MASt3R 코드·checkpoint에는 CC BY-NC-SA 4.0 및 학습 데이터별 추가 약관이 적용될 수 있으므로 상업 사용·모델 재배포를 금지하고, 개별 checkpoint notice와 학습 데이터 약관을 함께 확인한다. MASt3R retrieval mirror 자산은 출처·SHA를 남기되 Git에는 올리지 않는다.
+
+**E0b 실행 결과 (2026-11-05):** 성공 run `tum-freiburg1_desk-20261105-010`, `execution_context=host`. 소스 기하·좌표 매핑 확인 및 VGGT N별 CUDA 추론은 `results/pointmap_comparison/tum-freiburg1_desk-20261105-010/stages/E0b/`에 저장했다. 앞선 분석 스크립트 경로/CSV 필드 가정 오류 세 run `...-006`, `...-007`, `...-009`는 각자 `failed` manifest와 로그를 보존했고, 성공 결과에는 포함하지 않았다. 실행 스크립트·고정값과 완료 결과 manifest를 함께 보존한다.
+
 ### E1 — 표준 export 모듈 구현
 
 - [ ] `export_vggt.py`: V-P, V-D, depth/confidence, camera, frame_id를 NPZ/PLY로 저장.
@@ -363,13 +377,15 @@ gradresearch_vggt_mast3r_slam/
 
 ## 13. 구현 전 확인해야 하는 사항
 
-- [ ] 비교 대상 VGGT checkpoint/version 선택(`VGGT-1B` 등) 및 라이선스 확인.
-- [ ] MASt3R-SLAM의 실제 수정 없이 추출 가능한 Pointmap 단계와 export 위치 확정.
-- [ ] 모델별 내부 입력 크기, 원본 해상도 역매핑 정확도 확인.
-- [ ] GT 정렬용 prefix의 최소 길이·카메라 이동 퇴화 기준 결정.
-- [ ] GT 오차 허용치, outlier τ, voxel 크기, valid depth range를 개발 장면에서 고정.
-- [ ] GPU VRAM을 확인하고 VGGT의 최대 N에 대한 현실적인 제한 설정.
-- [ ] 데이터셋별 재배포·사용 조건 확인.
+- [x] 비교 대상 VGGT checkpoint/version 선택(`facebook/VGGT-1B`, source commit/checkpoint SHA 기록) 및 라이선스 확인.
+- [x] MASt3R-SLAM의 실제 수정 없이 추출 가능한 fused keyframe Pointmap 단계와 export 위치 확정.
+- [x] 모델별 내부 입력 크기 및 픽셀 중심 기준 원본 역매핑 확인.
+- [x] GT 정렬용 prefix 최소 길이(60 valid frames; 현재 개발 장면 prefix 120)와 카메라 이동 퇴화 기준 결정.
+- [x] GT 거리 허용치 `0.05 m`, outlier `tau=0.05 m`, voxel `0.02 m`, 자유공간 GT margin `0.02 m`, valid depth `0.30–5.00 m`를 개발 장면 기준으로 고정.
+- [x] 호스트 GPU VRAM 확인 및 안전한 VGGT 최대 입력 `N=4` 설정(N=5는 메모리 여유 부족, N=6 OOM).
+- [x] TUM 데이터, VGGT, MASt3R-SLAM 및 MASt3R checkpoint의 사용·재배포 조건 확인; 다운로드 데이터/weights는 Git에서 제외.
+
+**§13 완료 기록:** 결정 근거와 측정은 E0b run `tum-freiburg1_desk-20261105-010`의 manifest 및 measurements에 있다. TUM RGB-D 데이터는 [공식 페이지](https://cvg.cit.tum.de/data/datasets/rgbd-dataset)에 CC BY 4.0으로 표시되어 있고, VGGT 원 체크포인트는 [공식 저장소](https://github.com/facebookresearch/vggt)의 공지대로 비상업 조건이다. MASt3R-SLAM/MASt3R는 [코드 라이선스](https://github.com/rmurai0610/MASt3R-SLAM/blob/main/LICENSE.md)와 [checkpoint notice](https://github.com/naver/mast3r/blob/main/CHECKPOINTS_NOTICE)를 함께 적용한다. 데이터·weight 바이너리는 공개 Git에 넣지 않는다.
 
 ---
 
@@ -381,5 +397,10 @@ gradresearch_vggt_mast3r_slam/
 4. MASt3R-SLAM 공식 GitHub의 `main.py`, `mast3r_slam/frame.py`, `mast3r_slam/evaluate.py`: https://github.com/rmurai0610/MASt3R-SLAM
 5. Wang et al., **DUSt3R: Geometric 3D Vision Made Easy**: https://arxiv.org/abs/2312.14132
 6. Leroy et al., **Grounding Image Matching in 3D with MASt3R**: https://arxiv.org/abs/2406.09756
+7. VGGT official repository/checkpoint terms: https://github.com/facebookresearch/vggt and https://github.com/facebookresearch/vggt/blob/main/LICENSE.txt
+8. MASt3R-SLAM license: https://github.com/rmurai0610/MASt3R-SLAM/blob/main/LICENSE.md
+9. MASt3R checkpoint training-data license notice: https://github.com/naver/mast3r/blob/main/CHECKPOINTS_NOTICE
+10. TUM RGB-D benchmark license and citation: https://cvg.cit.tum.de/data/datasets/rgbd-dataset
+11. TUM RGB-D depth format and scale reference: https://cvg.cit.tum.de/_media/spezial/bib/sturm12iros.pdf
 
-**문서 성격:** 아직 실행·검증되지 않은 실험 계획이다. 표의 결과값과 결론은 실험 후 별도 문서에 기록한다.
+**문서 성격:** 이 문서는 계획과 단계별 실행 기록을 함께 보관한다. §13 고정값은 개발 장면용이며, 이후 평가 결과는 사전 고정된 설정을 그대로 적용하고 별도 결과 문서에 기록한다.
