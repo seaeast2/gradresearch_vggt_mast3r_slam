@@ -280,13 +280,19 @@ MASt3R-SLAM은 동일한 4 RGB 프레임을 입력받아 M-F keyframe 1개를 ex
 
 ### E2 — GT 기반 정량 평가 파이프라인
 
-- [ ] `associate_rgb_depth_pose.py`: 유효 GT pixel과 타임스탬프 매칭 결과 저장.
-- [ ] `align_sim3.py`: 사전 고정한 alignment prefix와 변환 로깅.
-- [ ] `evaluate_pixel.py`: Depth/3D per-pixel 오류 및 valid fraction 계산.
-- [ ] `evaluate_cloud.py`: Accuracy/Completeness/F-score, common visibility 영역.
-- [ ] `evaluate_outliers.py`: surface outlier/free-space violation/retention curve.
+- [x] `associate_rgb_depth_pose.py`: 유효 GT pixel과 타임스탬프 매칭 결과 저장.
+- [x] `align_sim3.py`: 사전 고정한 alignment prefix와 변환 로깅.
+- [x] `evaluate_pixel.py`: Depth/3D per-pixel 오류 및 valid fraction 계산.
+- [x] `evaluate_cloud.py`: Accuracy/Completeness/F-score, common visibility 영역.
+- [x] `evaluate_outliers.py`: surface outlier/free-space violation/retention curve.
 
 **완료 기준:** 합성 3D 점/카메라의 정답이 알려진 단위 테스트에서 정렬과 오차를 정확하게 회수한다.
+
+**E2 실행 결과 (2026-11-05):** run `tum-freiburg1_desk-E2-20261105-015`, `execution_context=host` (CPU 평가; 신경망 추론 없음). 기존 E1의 4개 RGB frame 17–20 export와 E0 원본 데이터를 입력으로 사용했다. 독립 재연결에서 RGB 613장 중 depth/pose 타임스탬프가 각각 20 ms 이내에 모두 매칭된 항목은 596장이었고, 기존 E0 association과 일치했다. 합성 검증은 임의의 비항등 Sim(3) 회수 최대 행렬 오차 `1.99e-11`, 카메라 중심 RMSE `1.87e-10 m`, 픽셀 역변환 오차 `2.84e-14 px`, depth/3D 정확 회수 0 오차로 통과했으며 퇴화 선형 궤적을 거부했다. 고정한 최소 60 프레임 prefix보다 짧아 VGGT는 4장, M-F는 1장 모두 sequence-global Sim(3)을 계산하지 않았다.
+
+픽셀 평가에서 V-P 4/4, V-D 4/4, M-F 1/4 frame을 평가했다. frame macro AbsRel은 각각 `0.2185`, `0.2189`, `0.1698`; depth RMSE는 `0.2811`, `0.2806`, `0.2373 m`; camera-local 3D median error는 `0.2528`, `0.2504`, `0.1569 m`였다. 이 M-F 값은 선택된 한 keyframe만의 결과로 VGGT 전체와 동일 표본 비교가 아니다. 공통 GT 관측 표면에서 frame별 5 cm F-score는 V-P `0.0366–0.0458`, V-D `0.0388–0.0500`, M-F `0.1144`였고, 이는 global 정합 정확도가 아니라 per-frame camera-coordinate 점군 점수다. GT 유효 pixel의 약 99.98–100%는 각 출력 마스크와 겹쳤다.
+
+V-P/V-D 점 차이 중앙값은 `4.37 mm`였으며, 그 크기와 각 출력의 GT 3D 오차 간 pixel-level Spearman rho는 `0.540`/`0.531`이었다(총 1,016,716 대응 pixel). 이는 이 4장 desk pilot에서의 기술적 상관이며, 보정된 불확실도나 다른 장면으로 일반화되는 관계를 뜻하지 않는다. Confidence 상위 40% 유지 시 V-P/V-D 3D 중앙 오차는 감소했지만, 이 역시 프레임별 탐색 결과다. MASt3R fusion count는 관측값 4 하나뿐이라 상관을 추정하지 않았다. 결과, CSV, 로그, 실행 설정과 manifest는 `results/pointmap_comparison/tum-freiburg1_desk-E2-20261105-015/stages/E2/`에 있고, 재현 코드는 `experiments/pointmap_comparison/E2/`에 있다.
 
 ### E3 — 파일럿 및 실험 반복
 
