@@ -1,0 +1,61 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.ipynb_checkpoints/
+
+# Local environments and build artifacts
+.venv/
+venv/
+env/
+build/
+dist/
+*.so
+*.o
+*.a
+
+# Local credentials and machine-specific settings
+.env
+.env.*
+!.env.example
+.aws/
+*.pem
+*.key
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Downloaded datasets, model weights, external checkouts, and experiment outputs.
+# Keep only the directory placeholders; reproducible scripts/configs live elsewhere.
+/thirdparty/*
+!/thirdparty/.gitkeep
+/data/*
+!/data/.gitkeep
+/checkpoints/*
+!/checkpoints/.gitkeep
+/results/*
+!/results/.gitkeep
+/logs/
+/wandb/
+/runs/
+/outputs/
+
+# Large model and reconstruction artifacts, including accidental exports
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.ply

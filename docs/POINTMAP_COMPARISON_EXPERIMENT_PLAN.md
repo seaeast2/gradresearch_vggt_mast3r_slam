@@ -88,6 +88,7 @@ MASt3R-SLAM 공식 구현의 `mast3r_slam/frame.py`는 `X_canon`과 `T_WC`를 �
 - mixed precision(BF16/FP16), TF32, deterministic 설정, batch/frame 수를 함께 기록한다.
 - GPU 워밍업 후 추론 시간을 측정하되, **모델 로딩/체크포인트 다운로드, 전처리, 추론, 후처리, export**를 분리하여 측정한다.
 - OOM/시간 초과/추적 실패/유효 점 부족도 **실패율**로 보고한다. 시험마다 필요한 최대 VRAM을 기록한다.
+- GPU/CUDA 장치 확인, CUDA smoke test 및 실제 추론은 **샌드박스 밖의 호스트 환경**에서 수행한다. 샌드박스에서 GPU가 보이지 않는 결과를 호스트 GPU 부재로 해석하지 않는다. 각 확인·실행의 `execution_context`(예: `host` 또는 `sandbox`), GPU/driver/CUDA 정보를 manifest와 로그에 기록한다.
 
 ### 4.1 카메라 보정 조건
 
@@ -98,12 +99,38 @@ MASt3R-SLAM 공식 구현의 `mast3r_slam/frame.py`는 `X_canon`과 `T_WC`를 �
 
 ## 5. 중간 결과 표준 포맷
 
-각 실행에서 데이터셋·프레임 ID·타임스탬프를 키로 다음을 기록한다.
+### 5.1 실행 단계 코드와 결과물 격리
+
+모든 실제 실행 단계에는 순서대로 `E0`, `E1`, `E2`처럼 영문자 `E`와 숫자로 된 고유 코드를 부여한다. 아래 §8의 단계 코드는 계획·실행 로그·폴더·보고서에서 같은 이름으로 사용한다. 한 번 부여한 코드는 해당 단계의 목적을 식별하는 이름으로 유지하며, 새 단계를 추가하면 사용하지 않은 다음 번호를 쓴다.
+
+각 실험 실행(run)은 고유한 `<run_id>`를 갖고, 각 단계의 산출물·로그·설정·상태 기록은 그 실행 폴더 안의 해당 단계 폴더에만 저장한다. 다른 단계의 파일을 덮어쓰거나 한 폴더에 합치지 않는다. 앞 단계 산출물을 입력으로 쓰는 경우 원본은 그대로 두고, 입력 경로와 SHA-256을 현재 단계의 manifest에 기록한다. 재실행이나 실패 후 수정 실행은 새 `<run_id>`를 만들어 기존 결과를 보존한다.
+
+재현에 필요한 실행 스크립트·설정·패치는 저장소의 `experiments/`, `scripts/`, `docs/`에 두고 Git으로 추적한다. 내려받은 데이터·체크포인트·upstream checkout·실행 결과는 저장소 루트 `data/`, `checkpoints/`, `thirdparty/`, `results/`에 두며 `.gitignore`로 제외한다. `scripts/pointmap_comparison/download_e0_resources.sh`는 E0 리소스를 공개 출처에서 내려받고 SHA-256을 검증한다.
 
 ```text
-results/
-  <dataset>/<sequence>/<protocol>/<model_variant>/<run_id>/
-    config.json            # git SHA, ckpt SHA256, 인자, HW/SW, 처리 조건
+results/pointmap_comparison/<run_id>/
+  run_manifest.json             # 실행 전체의 목적, 단계 목록, 시작 커밋
+  stages/
+    E0/
+      manifest.json             # 상태, 명령, 입력 경로/hash, 환경, 산출물/hash
+      config/                    # 이 단계에서 실제 사용한 설정 사본
+      artifacts/                 # 이 단계가 생성한 결과만 저장
+      logs/                      # 이 단계의 stdout/stderr 및 실행 로그
+    E1/
+      manifest.json
+      config/
+      artifacts/
+      logs/
+    ...
+```
+
+`<run_id>`는 데이터셋/시퀀스와 실행 시각 또는 고유 식별자를 포함해 충돌 없이 정한다. 각 단계 manifest에는 `stage_code`, 단계명, 상태(`planned`/`running`/`completed`/`failed`), 시작·종료 시각, 입력 및 해시, 설정, Git/checkpoint SHA, HW/SW·실행 환경, 산출물 상대 경로와 SHA-256, 실패 사유를 남긴다. 결과 요약표나 보고서도 생성 단계의 `artifacts/`에 저장하고, 여러 단계 결과를 묶은 최종 요약은 별도 후속 단계 폴더에 둔다.
+
+각 단계의 `artifacts/` 안에서 데이터셋·프레임 ID·타임스탬프를 키로 다음을 기록한다. 아래는 한 단계가 생성하는 결과의 예이며, 실제 파일은 반드시 해당 `stages/<stage_code>/artifacts/` 아래에 둔다.
+
+```text
+stages/<stage_code>/artifacts/
+  <dataset>/<sequence>/<protocol>/<model_variant>/
     frames.csv             # 원본 frame_id, timestamp, 입력/출력 성공, 이미지 변환
     cameras.npz            # 프레임별 camera pose (원래 예측 좌표계)
     pointmaps.npz          # 프레임별 [H,W,3], valid_mask, conf, RGB 인덱스
@@ -194,16 +221,18 @@ e_{mathrm{3D}}(u,v)=left|,Sigl(hat P(u,v)igr)-P^*(u,v),ight|_2
 
 ## 8. 실행 단계별 계획과 완료 기준
 
-### Phase 0 — 환경 준비·데이터 확인
+### E0 — 환경 준비·데이터 확인
 
-- [ ] 두 공식 저장소와 모델 체크포인트를 분리 설치한다.
-- [ ] TUM RGB-D 1개 시퀀스 다운로드 및 RGB–Depth–GT Pose 동기화.
-- [ ] 두 모델의 기본 데모 실행 및 파일 저장 확인.
-- [ ] 모든 실행의 commit/checkpoint hash 기록.
+- [x] 두 공식 저장소와 모델 체크포인트를 분리 설치한다.
+- [x] TUM RGB-D 1개 시퀀스 다운로드 및 RGB–Depth–GT Pose 동기화.
+- [x] 두 모델의 기본 데모 실행 및 파일 저장 확인.
+- [x] 모든 실행의 commit/checkpoint hash 기록.
 
 **완료 기준:** 같은 RGB 프레임 목록에서 두 모델 실행이 가능하고 중간 결과를 저장할 수 있다.
 
-### Phase 1 — 표준 export 모듈 구현
+**E0 실행 기록 (2026-11-05):** run `tum-freiburg1_desk-20261105-001`, `execution_context=host`. CUDA/GPU probe, smoke test, 두 모델 추론은 샌드박스 밖 호스트에서 수행했다(RTX 5060, 8,151 MiB, driver 595.99.02, CUDA 13.2; PyTorch `2.14.1+cu132`, Python 3.11.18). 동일한 TUM `freiburg1_desk` RGB 4장(timestamp `1305031453.359684`–`1305031453.459685`)을 두 실행기에 전달했다. 원본은 RGB 613장, depth 595장, GT pose 2,335개이며, 각 RGB 시각에 depth와 pose를 독립 최근접 매칭하고 허용 오차 20 ms를 적용했을 때 596장이 유효했다. VGGT는 4장 입력의 Pointmap/Depth·confidence 및 camera 예측을 NPZ로 저장했다. MASt3R-SLAM 데모는 정상 종료하고 PLY와 trajectory를 저장했지만, 자동 키프레임 선택으로 4장 중 1장만 PLY에 기여했다. 따라서 E0 완료는 **같은 입력 목록에서 두 파이프라인을 실행하고 중간 결과를 저장할 수 있음**을 뜻하며, 프레임별 MASt3R 출력 완전성을 뜻하지 않는다. 체크포인트 SHA256, 소스 commit, 설정·패치, 전체 로그와 출력 목록은 `results/pointmap_comparison/tum-freiburg1_desk-20261105-001/stages/E0/manifest.json` 및 `artifacts/e0_summary.json`에 기록했다.
+
+### E1 — 표준 export 모듈 구현
 
 - [ ] `export_vggt.py`: V-P, V-D, depth/confidence, camera, frame_id를 NPZ/PLY로 저장.
 - [ ] `export_mast3r_slam.py` 또는 upstream 최소 패치: M-F의 `X_canon`, `T_WC`, confidence 및 키프레임 원본 ID를 저장.
@@ -212,7 +241,7 @@ e_{mathrm{3D}}(u,v)=left|,Sigl(hat P(u,v)igr)-P^*(u,v),ight|_2
 
 **완료 기준:** RGB 픽셀 한 개를 역추적하여 두 출력에서 해당 3D 위치와 Confidence를 조회할 수 있다.
 
-### Phase 2 — GT 기반 정량 평가 파이프라인
+### E2 — GT 기반 정량 평가 파이프라인
 
 - [ ] `associate_rgb_depth_pose.py`: 유효 GT pixel과 타임스탬프 매칭 결과 저장.
 - [ ] `align_sim3.py`: 사전 고정한 alignment prefix와 변환 로깅.
@@ -222,7 +251,7 @@ e_{mathrm{3D}}(u,v)=left|,Sigl(hat P(u,v)igr)-P^*(u,v),ight|_2
 
 **완료 기준:** 합성 3D 점/카메라의 정답이 알려진 단위 테스트에서 정렬과 오차를 정확하게 회수한다.
 
-### Phase 3 — 파일럿 및 실험 반복
+### E3 — 파일럿 및 실험 반복
 
 - [ ] 1개 장면, 4/8/16/32프레임 입력 예산 실험(P1).
 - [ ] 다른 장면에서 동일 조건 재현.
@@ -233,7 +262,7 @@ e_{mathrm{3D}}(u,v)=left|,Sigl(hat P(u,v)igr)-P^*(u,v),ight|_2
 
 **완료 기준:** 성공/실패를 포함한 모든 조합에서 자동 생성된 CSV/JSON 비교표를 얻는다.
 
-### Phase 4 — 사례 분석과 연구 연결
+### E4 — 사례 분석과 연구 연결
 
 - [ ] 이상점이 많은 사례 5개 이상 기록(초기 제안).
 - [ ] 책상 모서리, 가림, 무텍스처 벽, 반사 표면, 긴 이동 궤적 등 실패 원인 분류.
