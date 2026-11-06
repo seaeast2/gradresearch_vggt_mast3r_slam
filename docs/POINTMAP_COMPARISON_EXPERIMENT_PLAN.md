@@ -353,6 +353,50 @@ Confidence 상위 40% 유지 시 C02의 M-F outlier 비율은 `0.746`에서 `0.5
 
 PLY: `results/pointmap_comparison/hkairport01-E5-20261105-002/stages/E5/artifacts/outputs/hkairport01-E5-20261105-002/rgbd_dataset_freiburg1_HKairport01_E5.ply`. trajectory, frame hashes, 환경·로그·PLY 검증 요약은 같은 stage의 `artifacts/outputs/`, `artifacts/data/`, `artifacts/e5_summary.json`, `manifest.json`에 있다. 첫 실행 `hkairport01-E5-20261105-001`은 `rgb.txt` 개행 생성 오류로 dataset 초기화 전에 종료되어 별도 실패 run으로 보존했다. 재현 코드는 `experiments/pointmap_comparison/E5/`에 있다.
 
+### E5a — HKairport01 VGGT Point Head 및 PLY
+
+E5의 핀된 240장 mapping split에서 4장을 균등 간격으로 선택해 VGGT-1B에 공동 입력한다. E0b에서 8 GB GPU의 안전 입력 예산을 N=4로 확인했으므로 본 단계는 입력 전체의 재구성이 아니라 시퀀스 대표 샘플에 대한 시각적 pointmap 산출이다. 한 번의 공동 추론에서 나온 네 개의 V-P world pointmap은 동일한 VGGT 예측 좌표계를 공유하므로 단일 PLY로 합친다. M-F 융합 지도가 아닌 feed-forward V-P 출력이며, 절대 정확도나 240장 전체의 pointmap coverage를 주장하지 않는다.
+
+**E5a 실행 결과 (2026-11-06):** run `hkairport01-E5a-20261106-001`, `execution_context=host`, NVIDIA GeForce RTX 5060, Python 3.11.18, PyTorch `2.14.1+cu132`/CUDA 13.2, VGGT-1B checkpoint SHA-256 `d15bf50a8615c8225ed48b51ea5cac673d82442ec0309036df555a053253afe0`을 사용했다. mapping row/frame index 0, 80, 159, 239 (timestamp `1671606500.199900866`, `1671606520.199968100`, `1671606539.799878836`, `1671606559.799968958`)을 518×518 격자로 공동 추론했다. `V-P`의 valid pixel은 프레임당 224,812개이며, 합친 PLY는 899,248 vertices, XYZ 유한값 899,248개, 13,488,900 bytes, SHA-256 `6101de31ed6729da13c312dc42d1484f5b64ba3f014762d282efb26606784abf`이다. PyTorch peak allocated/reserved VRAM은 각각 6,775,736,832/7,591,690,240 bytes였다. 로그에 allocator의 일시적 할당 실패 경고가 있었지만 추론·PLY 생성은 정상 완료했고, 출력 검증을 통과했다.
+
+PLY: `results/pointmap_comparison/hkairport01-E5a-20261106-001/stages/E5a/artifacts/exports/HKairport01_E5a_V-P_N04.ply`. 원본 프레임별 `V-P`/`V-D` PLY, NPZ, 입력 목록, 로그, 요약과 manifest는 같은 stage에 보존한다. 재현 스크립트는 `experiments/pointmap_comparison/E5a/`에 있다.
+
+### E5b — MASt3R-SLAM 실제 키프레임에 맞춘 VGGT pointcloud
+
+E5의 240장 mapping 입력을 동일한 MASt3R-SLAM 설정으로 재실행하고, 종료 후 fused keyframe `X_canon`, confidence, RGB, `T_WC`를 export한다. 재실행 키프레임 ID/timestamp가 E5 기준과 정확히 일치하는지 검증한 뒤, **그 18개 RGB 프레임만** VGGT에 동일 순서로 입력한다. VGGT는 최대 4장씩 추론하고, 각 V-P world point를 예측 world-to-camera extrinsic 역변환으로 camera-local 좌표에 옮긴 뒤, 대응 MASt3R `T_WC` Sim(3)으로 변환해 두 결과를 공통 pose 프레임에서 시각화한다.
+
+**E5b 실행 결과 (2026-11-06):** run `hkairport01-E5b-20261106-001`은 호스트 RTX 5060에서 완료됐다. 재실행 MASt3R-SLAM은 E5와 동일한 18개 frame ID `[0, 133, 134, 135, 136, 152, 153, 154, 155, 156, 157, 158, 159, 160, 162, 163, 164, 200]` 및 timestamp를 선택했고, 해당 pointmap을 VGGT 5개 batch(N≤4)로 처리했다. M-F PLY는 3,833,856개 유한 XYZ 점(57,508,021 bytes, SHA-256 `f25b4cd094b19d4a78c23e331e3940ab419fc7915fe3c79c6443e039f281efcf`), 공통 M-F pose로 변환한 V-P PLY는 4,046,616개 유한 XYZ 점(60,699,421 bytes, SHA-256 `822951d51f6ce83c255e0c51f954bb4890d19d2ca7a96aa3875d23b1812630fb`)이다. 두 PLY의 frame identity, binary payload 크기, finite XYZ 수, valid-mask/vertex 수 일치 검증은 통과했다.
+
+두 cloud는 동일 keyframe RGB와 같은 MASt3R-SLAM pose 프레임을 사용하지만, 모델 출력 격자/valid mask는 다르다(MASt3R 416×512, VGGT 518×518 네트워크 격자). 따라서 vertex 수 차이는 점별 정확도 차이를 뜻하지 않는다. pose 좌표계를 공유하도록 재표현한 시각화 비교이며 독립 trajectory 비교가 아니다. HKairport01 기하 GT가 없어 결과 해석은 정성적이다. PLY, 배치별 NPZ, 프레임별 export, keyframe match, 검증 JSON과 manifest는 `results/pointmap_comparison/hkairport01-E5b-20261106-001/stages/E5b/`에 있다. 재현 코드는 `experiments/pointmap_comparison/E5b/`에 있다.
+
+### E5c — 동일한 1초 간격 RGB 4장과 별도 PLY 출력
+
+E5의 mapping split에서 원본 candidate grid index `[0, 5, 10, 15]`를 선택한다. 이들은 5 Hz 후보에서 시작 후 약 0, 1, 2, 3초의 RGB이며, held-out 후보가 mapping CSV에서 제외되어 있으므로 mapping row index와 혼동하지 않도록 candidate index로 선택한다. 동일한 네 RGB/timestamp를 VGGT에 공동 입력하고 MASt3R-SLAM에 시간순 입력한다. 두 모델의 PLY는 서로 합치거나 좌표 정합하지 않고 각각 별도로 생성한다. MASt3R-SLAM의 자동 keyframe 선택은 그대로 두고 실제 출력 coverage를 기록한다.
+
+**E5c 실행 결과 (2026-11-06):** 성공 run `hkairport01-E5c-20261106-002`, `execution_context=host`, RTX 5060. source mapping frame indices는 `[0, 4, 8, 12]`, candidate grid indices는 `[0, 5, 10, 15]`, timestamp는 `1671606500.199900866`, `1671606501.199827909`, `1671606502.199888945`, `1671606503.199938059`로 간격은 약 1초다. VGGT는 네 입력 전부를 출력했고 V-P PLY에는 899,248개의 유한 XYZ 점(13,488,900 bytes, SHA-256 `3ae2657b04a25b1322768c5404712031e3105bd27d8a9f17a003e9d8ea72b9ea`)이 있다. MASt3R-SLAM은 하나의 fused keyframe pointmap을 출력했으며, 그 keyframe ID는 첫 입력(frame index 0)이다. 다만 해당 pointmap의 `fusion_count=4`, `update_count=4`로 기록되어 네 입력이 이 하나의 fused pointmap 생성·갱신에 반영됐다. 따라서 1/4는 서로 다른 keyframe pointmap의 출력 비율이며 입력 프레임의 기여율이 아니다. 별도 M-F PLY에는 212,992개의 유한 XYZ 점(3,195,060 bytes, SHA-256 `b74115b16cc04423606787c38c4e5db58ef521ddd9522a63c52021d96244097e`)이 있다. 두 출력 모두 PLY 형식·payload·유한 좌표 검증을 통과했다.
+
+첫 준비 run `hkairport01-E5c-20261106-001`은 mapping row index를 일정 간격으로 선택해 실제로 1.2초 간격이 된 것을 사전 검증에서 발견하고 중단했다. 해당 실패 manifest/log는 보존하고, candidate grid index를 직접 선택한 새 run `...-002`에서 완료했다. 두 모델의 별도 cloud는 `results/pointmap_comparison/hkairport01-E5c-20261106-002/stages/E5c/artifacts/exports/{vggt,mast3r}/`에 있다. 실행·검증 코드는 `experiments/pointmap_comparison/E5c/`에 있다. 이 시퀀스의 geometry GT가 없으므로 본 결과는 정성적 비교다.
+
+### E5d — 동일한 2초 간격 RGB 4장과 별도 PLY 출력
+
+E5c와 같은 조건에서 샘플 간격만 2초로 바꾸었다. E5 5 Hz candidate grid index `[0, 10, 20, 30]`를 선택하여 약 0, 2, 4, 6초 시점의 동일한 RGB/timestamp를 VGGT와 MASt3R-SLAM에 전달했다. 모델별 PLY를 별도로 생성하고, MASt3R-SLAM의 keyframe 선택 및 pointmap fusion 결과는 기본 설정 그대로 기록한다.
+
+**E5d 실행 결과 (2026-11-06):** run `hkairport01-E5d-20261106-001`, 호스트 RTX 5060에서 완료, PLY 검증 통과. VGGT는 네 입력 전체를 출력해 899,248개 유한 XYZ 점(13,488,900 bytes, SHA-256 `7f4a5ac689411359ebd60764d9fed3104c7d5c8266ad87d5e0286bcc1a3f4ad6`)의 V-P PLY를 생성했다. MASt3R-SLAM은 keyframe ID 0에 해당하는 fused map 하나를 export했으며, 그 map의 `fusion_count=4`, `update_count=4`다. M-F PLY는 212,992개 유한 XYZ 점(3,195,060 bytes, SHA-256 `6e33ff7e5697c4d6a86d0358fd741fe781426be6457766759fab84d9c213c436`)이다. 즉 출력 keyframe은 하나지만 네 입력 모두 하나의 map 생성·갱신에 반영됐다. 두 모델의 cloud는 별도 좌표계 그대로 보존했고, HKairport01 기하 GT가 없어 정성적으로 비교한다.
+
+PLY와 검증 JSON은 `results/pointmap_comparison/hkairport01-E5d-20261106-001/stages/E5d/artifacts/exports/{vggt,mast3r}/` 및 `artifacts/validation/e5d_validation.json`에 있다. 재현 코드는 `experiments/pointmap_comparison/E5d/`에 있다.
+
+### E5e — 사용자가 지정한 RGB 4장과 별도 PLY 출력
+
+사용자가 지정한 원본 `000050.jpg`, `000070.jpg`, `000090.jpg`, `000110.jpg`를 mapping split에서 찾아 동일한 timestamp 순서로 VGGT와 MASt3R-SLAM에 입력했다. 파일 선택은 번호 그대로 고정하며 자동 keyframe 선택 및 fusion은 기본 설정으로 둔다. 두 모델의 pointcloud는 각각 별도 PLY로 내보내고 서로 정합하거나 합치지 않는다.
+
+**E5e 실행 결과 (2026-11-06):** run `hkairport01-E5e-20261106-001`, 호스트 RTX 5060에서 완료했고 validation status는 `passed`다. 선택된 mapping frame indices는 `[50, 70, 90, 110]`, candidate grid indices는 `[62, 87, 112, 137]`, timestamp는 `1671606512.599915028`, `1671606517.599828005`, `1671606522.599810123`, `1671606527.599838972`로 각 입력 간격은 약 5초다. VGGT는 네 입력 전부를 출력해 V-P PLY에 899,248개 유한 XYZ 점(13,488,900 bytes, SHA-256 `78c5406f9e176d275cb8da051ff4bffc971f3f4e6dbf167e71fe72151e2d9728`)을 기록했다. MASt3R-SLAM은 첫 입력(frame index 50)을 keyframe으로 한 fused map 하나를 출력했다. 그 map의 `fusion_count=4`, `update_count=4`이므로 출력 keyframe은 하나지만 네 입력이 map 생성·갱신에 반영됐다. M-F PLY는 212,992개 유한 XYZ 점(3,195,060 bytes, SHA-256 `4fa7015e20397c03ca7a004417d4d476e1b294e50f15301e4192b3ea6fb65b0a`)이다. 두 cloud는 각 모델의 좌표계로 별도 보존했으며, 해당 시퀀스의 geometry GT가 없어 비교는 정성적이다.
+
+PLY는 `results/pointmap_comparison/hkairport01-E5e-20261106-001/stages/E5e/artifacts/exports/vggt/HKairport01_E5e_V-P_N04.ply` 및 `artifacts/exports/mast3r/HKairport01_E5e_M-F_N04.ply`에, 검증 결과는 `artifacts/validation/e5e_validation.json`에 있다. 재현 코드는 `experiments/pointmap_comparison/E5e/`에 있다.
+
+**E5e canonical 결과 갱신 (2026-11-06):** 비교용 canonical run은 `hkairport01-E5e-20261106-001`이다. VGGT의 네 입력 결과는 기존 `-001` 값을 유지하고, MASt3R-SLAM은 source run `hkairport01-E5e-20261106-002`에서 네 프레임을 각각 keyframe으로 만든 결과를 import했다. 002의 네 M-F pointmap을 추정 `T_WC`로 SLAM world frame에 옮겨 합친 PLY는 851,968개 유한 XYZ 점(12,779,700 bytes, SHA-256 `f5cff7170f76cdadaa0b2f5ba0758babbce1a11137991e98f005759693d2b060`)이며, keyframe별 fusion/update count는 `[2, 2, 2, 1]`이다. VGGT PLY는 001 기존 결과를 그대로 유지했으며 hash가 002에 포함됐던 VGGT 파일과 일치한다. 두 모델은 같은 네 이미지와 timestamp를 사용하지만 모델별 좌표계는 별도이며 cross-model 정합은 수행하지 않았다. 검증 status는 `passed`다.
+
+기존 001의 자동 keyframe MAST3R 결과는 `artifacts/archive/original_automatic_run001/`에 보관했다. 002의 원 manifest·summary·검증 파일 및 실행 설정은 `artifacts/provenance/imported_run_002/`에 보존했다. 002 run 폴더는 canonical 결과를 001로 통합한 뒤 삭제했다. 최종 M-F와 V-P PLY는 모두 `results/pointmap_comparison/hkairport01-E5e-20261106-001/stages/E5e/artifacts/exports/{mast3r,vggt}/`에 있다. 재현 코드는 `experiments/pointmap_comparison/E5e/scripts/run_e5e_force_keyframes.sh`다.
+
 ## 9. 보고서에 반드시 포함할 표/그림
 
 | 결과물 | 내용 |
